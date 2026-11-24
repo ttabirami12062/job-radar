@@ -3,7 +3,6 @@ so a run can show exactly why jobs were dropped and the rules can be tuned."""
 import re
 from datetime import datetime, timedelta, timezone
 
-from radar.sources import COARSE
 
 MAX_AGE_HOURS = 24
 MAX_YEARS = 2  # SDE 1 / early career: drop anything that asks for 3+ years
@@ -168,12 +167,14 @@ def evaluate(j, now=None):
     j["years"] = years_required(j["description"])
     j["sponsorship"] = sponsorship(text)
 
-    # Boards with no date (or Workday's vague "Posted Yesterday") fall back to when
-    # we first saw the job, but not on a board's very first check, when everything is "new".
+    # Only when there's no date at all (iCIMS) or Workday's vague "Posted Yesterday" do we
+    # fall back to when we first saw the job, and never on a board's very first check.
+    # A clear old date always wins.
     fresh = timedelta(hours=MAX_AGE_HOURS)
-    posted_ok = j.get("posted_at") and now - datetime.fromisoformat(j["posted_at"]) <= fresh
-    seen_ok = (j["ats"] in COARSE or not j.get("posted_at")) and not j.get("baseline") \
-        and now - datetime.fromisoformat(j["first_seen"]) <= fresh
+    age = now - datetime.fromisoformat(j["posted_at"]) if j.get("posted_at") else None
+    posted_ok = age is not None and age <= fresh
+    vague = age is None or (j["ats"] == "workday" and age <= timedelta(hours=48))
+    seen_ok = vague and not j.get("baseline") and now - datetime.fromisoformat(j["first_seen"]) <= fresh
     if not (posted_ok or seen_ok):
         return False, "older than 24h" if j.get("posted_at") else "no date (first check)"
 

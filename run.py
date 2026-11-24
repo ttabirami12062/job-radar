@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
-from radar import filters, lists, match
+from radar import filters, lists, match, verify
 from radar.sources import COARSE, FETCHERS
 
 ROOT = Path(__file__).parent
@@ -44,10 +44,11 @@ def open_db():
         posted_at text, first_seen text, last_seen text, years int, sponsorship text,
         keep int, reason text, status text default 'new', description text)""")
     db.execute("create table if not exists runs (started text, finished text, boards int, failed int, jobs_read int, kept int)")
-    try:
-        db.execute("alter table jobs add column match text")
-    except sqlite3.OperationalError:
-        pass  # already there
+    for col in ("match", "real_posted", "date_check"):
+        try:
+            db.execute(f"alter table jobs add column {col} text")
+        except sqlite3.OperationalError:
+            pass  # already there
     db.execute("create table if not exists boards (ats text, slug text, ok int, jobs int, error text, checked text, first_ok text, primary key (ats, slug))")
     return db
 
@@ -97,6 +98,9 @@ def main():
     start = time.time()
     reasons, kept, total, failed = Counter(), [], 0, 0
     seen_keys = set()
+    # Real post dates of every job read straight from a company board, so a list or LinkedIn
+    # copy of the same job can borrow the company's date.
+    board_dates = {}
 
     print(f"Checking {len(companies)} company job boards...")
     with ThreadPoolExecutor(max_workers=24) as pool:
@@ -118,6 +122,9 @@ def main():
                     continue
                 seen_keys.add(j["key"])
                 total += 1
+                if j["ats"] not in ("list", "linkedin") and j["posted_at"]:
+                    k = same_job(j)
+                    board_dates[k] = min(board_dates.get(k, j["posted_at"]), j["posted_at"])
                 row = db.execute("select first_seen, status from jobs where key=?", (j["key"],)).fetchone()
                 j["first_seen"] = row[0] if row else now_s
                 j["baseline"] = j["first_seen"] <= first_ok
@@ -141,6 +148,44 @@ def main():
             if n % 50 == 0:
                 print(f"  {n}/{len(companies)} boards, {len(kept)} matches so far")
                 db.commit()
+    db.commit()
+
+    # Lists and LinkedIn show when *they* found a job, so look up its real date at the source.
+    to_check = []
+    for j in kept:
+        if j["ats"] not in ("list", "linkedin"):
+            j["date_check"] = f"date from {j['ats']}"
+            continue
+        on_board = board_dates.get(same_job(j))
+        if on_board:
+            j["real_posted"], j["date_check"] = on_board, "same job on the company's own board"
+            continue
+        cached = db.execute("select real_posted, date_check from jobs where key=?", (j["key"],)).fetchone()
+        if cached and cached[0]:  # only a real date is remembered; failed checks retry next run
+            j["real_posted"], j["date_check"] = cached
+        else:
+            to_check.append(j)
+    print(f"\nChecking the real posting date of {len(to_check)} jobs from lists and LinkedIn...")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for j, (real, how) in zip(to_check, pool.map(verify.real_date, to_check)):
+            j["real_posted"] = real.isoformat() if real else None
+            j["date_check"] = how if real else f"not verified: {how}"
+    still = []
+    for j in kept:
+        if j.get("real_posted"):
+            age_h = (now - datetime.fromisoformat(j["real_posted"])).total_seconds() / 3600
+            if age_h > filters.MAX_AGE_HOURS:
+                reason = f"really posted {age_h / 24:.0f} days ago ({j['date_check']})"
+                reasons["really older (list showed it as new)"] += 1
+                reasons["KEPT"] -= 1
+                db.execute("update jobs set keep=0, reason=?, real_posted=?, date_check=? where key=?",
+                           (reason, j["real_posted"], j["date_check"], j["key"]))
+                continue
+            j["posted_at"] = j["real_posted"]
+        db.execute("update jobs set real_posted=?, date_check=?, posted_at=coalesce(?, posted_at) where key=?",
+                   (j.get("real_posted"), j["date_check"], j.get("real_posted"), j["key"]))
+        still.append(j)
+    kept = still
     db.commit()
 
     best = {}

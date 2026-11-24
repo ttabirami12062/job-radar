@@ -28,7 +28,7 @@ def jobs():
     # Applied and hidden jobs stay visible in their tabs after they stop being fresh.
     rows = con.execute(
         """select key, company, ats, title, location, url, posted_at, first_seen, years, sponsorship,
-                  status, match, length(description) as desc_len
+                  status, match, date_check, length(description) as desc_len
            from jobs
            where (keep=1 and last_seen >= ?) or status in ('applied', 'hidden', 'saved')""",
         (last["started"] if last else "",),

@@ -52,7 +52,9 @@
   .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .tag { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
   .tag.resume { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-  .tag.yes { background: var(--good-soft); color: var(--good); }
+  .tag.yes, .tag.ok { background: var(--good-soft); color: var(--good); }
+  .tag.warn { background: var(--mid-soft); color: var(--mid); }
+  label.toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .skills { margin-top: 8px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
   .skills b { font-weight: 600; color: var(--muted); margin-right: 4px; }
   .sk { display: inline-block; padding: 1px 7px; border-radius: 6px; margin: 1px 2px; }
@@ -98,6 +100,7 @@
       <option value="new">Newest first</option>
       <option value="match">Best match first</option>
     </select>
+    <label class="toggle"><input type="checkbox" id="unverified"> Show jobs whose date couldn't be checked <span id="unvCount"></span></label>
     <div class="chips" id="roles"></div>
   </div>
   <main id="list"></main>
@@ -126,6 +129,8 @@ function ago(iso) {
   return `${Math.round(h / 24)}d ago`;
 }
 
+const unverified = (j) => (j.date_check || "").startsWith("not verified");
+
 function when(j) {
   if (COARSE.has(j.ats)) return `posted today · found ${ago(j.first_seen)}`;
   return `posted ${ago(j.posted_at)}`;
@@ -142,6 +147,7 @@ function visible() {
   const q = $("q").value.trim().toLowerCase();
   const min = +$("minScore").value;
   let list = state.jobs.filter((j) => tabOf(j) === state.tab);
+  if (state.tab === "fresh" && !$("unverified").checked) list = list.filter((j) => !unverified(j));
   if (state.role !== "all") list = list.filter((j) => j.match && j.match.best === state.role);
   if (min) list = list.filter((j) => j.match && j.match.score >= min);
   if (q) list = list.filter((j) => [j.title, j.company, j.location, ...(j.match?.matched || []), ...(j.match?.missing || [])]
@@ -166,6 +172,9 @@ function card(j) {
     m.best ? `<span class="tag resume">Use ${RESUME_NAMES[m.best] || m.best} resume</span>` : "",
     j.years ? `<span class="tag">${j.years}+ yrs asked</span>` : `<span class="tag">no years listed</span>`,
     j.sponsorship === "yes" ? `<span class="tag yes">sponsors visas</span>` : `<span class="tag">visa: not mentioned</span>`,
+    unverified(j)
+      ? `<span class="tag warn" title="${esc(j.date_check)}">date not verified</span>`
+      : `<span class="tag ok" title="${esc(j.date_check || "")}">✓ date checked</span>`,
     `<span class="tag">${SOURCE_NAMES[j.ats] || j.ats}</span>`,
   ].join("");
   const skills = m.best
@@ -195,6 +204,8 @@ function render() {
   $("tabs").innerHTML = [["fresh", "Fresh (24h)"], ["saved", "Saved"], ["applied", "Applied"], ["hidden", "Hidden"]]
     .map(([k, l]) => `<button class="tab ${state.tab === k ? "on" : ""}" data-tab="${k}">${l}<span class="n">${counts[k]}</span></button>`).join("");
   $("roles").innerHTML = ROLES.map(([k, l]) => `<button class="fchip ${state.role === k ? "on" : ""}" data-role="${k}">${l}</button>`).join("");
+  const unv = state.jobs.filter((j) => tabOf(j) === "fresh" && unverified(j)).length;
+  $("unvCount").textContent = unv ? `(${unv})` : "";
   const list = visible();
   $("list").innerHTML = list.length ? list.map(card).join("")
     : `<div class="empty">${state.tab === "fresh" ? "No jobs match these filters right now." : "Nothing here yet."}</div>`;
@@ -248,7 +259,7 @@ document.addEventListener("click", (e) => {
   }
 });
 $("runBtn").onclick = async () => { await fetch("/api/run", {method: "POST"}); setRunning(true); };
-["q", "minScore", "sort"].forEach((id) => $(id).addEventListener("input", render));
+["q", "minScore", "sort", "unverified"].forEach((id) => $(id).addEventListener("input", render));
 load();
 </script>
 </body>

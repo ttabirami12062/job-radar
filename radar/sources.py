@@ -16,6 +16,7 @@ UA = {"User-Agent": "Mozilla/5.0 (job-radar personal job search)"}
 
 # Workday rate-limits hard (HTTP 429) when many companies are asked at once.
 WORKDAY_SLOTS = threading.Semaphore(4)
+WORKABLE_SLOTS = threading.Semaphore(2)
 
 
 def get_json(url, body=None, timeout=20):
@@ -176,10 +177,12 @@ COARSE = {"workday", "amazon", "oracle", "workable", "icims", "list", "linkedin"
 
 
 def day_to_time(d, now):
-    # A date with no time: today counts as fresh, anything older doesn't.
+    # A date with no time counts as noon local time that day (never in the future):
+    # today's jobs are fresh, the day before yesterday's never are.
     if not d:
         return None
-    return now if d >= now.astimezone().date() else now - timedelta(hours=36)
+    noon = datetime(d.year, d.month, d.day, 12).astimezone(timezone.utc)
+    return min(noon, now)
 
 
 def amazon(_slug="amazon"):
@@ -229,26 +232,27 @@ def smartrecruiters(slug, title_ok=None):
 
 
 def workable(slug, title_ok=None):
-    d = get_json(f"https://apply.workable.com/api/v3/accounts/{slug}/jobs",
-                 {"query": "", "location": [], "department": [], "worktype": [], "remote": []})
+    with WORKABLE_SLOTS:
+        return _workable(slug, title_ok)
+
+
+def _workable(slug, title_ok=None):
+    # The public widget feed (what companies embed on their sites) has dates and descriptions
+    # in one request; the v3 search API rate-limits for a whole day.
+    d = get_json(f"https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true")
     now = datetime.now(timezone.utc)
     out = []
-    for p in d.get("results", []):
-        loc = p.get("location") or {}
-        published = parse_time(p.get("published"))
-        day = published.date() if published else None
-        desc = ""
-        if day and day >= (now - timedelta(days=1)).date() and (title_ok is None or title_ok(p["title"])):
-            try:
-                info = get_json(f"https://apply.workable.com/api/v2/accounts/{slug}/jobs/{p['shortcode']}")
-                desc = "\n".join(strip_html(info.get(k)) for k in ("description", "requirements", "benefits"))
-            except Exception:
-                pass
-        place = ", ".join(x for x in [loc.get("city"), loc.get("region"), loc.get("country")] if x)
-        if p.get("remote"):
+    for p in d.get("jobs", []):
+        try:
+            day = datetime.strptime(p.get("published_on") or p.get("created_at") or "", "%Y-%m-%d").date()
+        except ValueError:
+            day = None
+        place = ", ".join(x for x in [p.get("city"), p.get("state"), p.get("country")] if x)
+        if p.get("telecommuting"):
             place += " (Remote)"
-        out.append(job(slug, "workable", p["shortcode"], p["title"], place,
-                       f"https://apply.workable.com/{slug}/j/{p['shortcode']}/", day_to_time(day, now), desc))
+        out.append(job(d.get("name") or slug, "workable", p["shortcode"], p["title"], place,
+                       p.get("url") or f"https://apply.workable.com/{slug}/j/{p['shortcode']}/",
+                       day_to_time(day, now), strip_html(p.get("description")), p.get("published_on", "")))
     return out
 
 
@@ -284,9 +288,14 @@ def oracle(slug, title_ok=None):
 
 
 def get_text(url, timeout=20):
+    return get_page(url, timeout)[0]
+
+
+def get_page(url, timeout=20):
+    """Returns (text, final url after redirects)."""
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", "replace")
+        return r.read().decode("utf-8", "replace"), r.geturl()
 
 
 def icims(host, title_ok=None):

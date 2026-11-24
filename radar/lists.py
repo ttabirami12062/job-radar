@@ -9,7 +9,7 @@ import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from radar.sources import day_to_time, get_text, job, parse_time, strip_html
+from radar.sources import day_to_time, get_text, job, strip_html
 
 LISTS = {
     "simplify": "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/README.md",
@@ -109,20 +109,6 @@ def list_jobs(texts):
     return out
 
 
-def jobright_details(j):
-    # Jobright pages carry the exact publish time and a summary of the description.
-    page = get_text(j["url"])
-    t = re.search(r'"publishTime":"([^"]+)"', page)
-    if t:
-        j["posted_at"] = parse_time(t.group(1).replace(" ", "T") + "+00:00").isoformat()
-    parts = []
-    for key in ("jobSummary", "coreResponsibilities", "skillSummaries", "qualifications", "requirements"):
-        m = re.search(r'"' + key + r'":(\[[^\]]*\]|"(?:[^"\\]|\\.)*")', page)
-        if m:
-            parts.append(re.sub(r'\\n|["\[\]]', " ", m.group(1)))
-    j["description"] = "\n".join(parts)
-
-
 # ── LINKEDIN (public guest search, no login) ──
 LINKEDIN_SEARCHES = ["software engineer", "new grad software engineer", "machine learning engineer", "full stack engineer"]
 _li_lock = threading.Lock()
@@ -176,19 +162,6 @@ def linkedin(title_ok=None, pages=2):
 
 
 def lists_source(texts, title_ok=None):
-    from concurrent.futures import ThreadPoolExecutor
-    jobs = list_jobs(texts)
-    now = datetime.now(timezone.utc)
-    todo = [j for j in jobs if "jobright.ai" in j["url"] and j["posted_at"]
-            and now - datetime.fromisoformat(j["posted_at"]) <= timedelta(hours=24)
-            and (title_ok is None or title_ok(j["title"]))]
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda j: _safe(jobright_details, j), todo))
-    return jobs
-
-
-def _safe(fn, *a):
-    try:
-        fn(*a)
-    except Exception:
-        pass
+    # Jobright pages sit behind a bot check, so we never open them; their jobs get a real
+    # date only by matching the same job on a company board we read directly.
+    return list_jobs(texts)
