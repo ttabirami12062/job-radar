@@ -11,7 +11,7 @@ MAX_YEARS = 2  # SDE 1 / early career: drop anything that asks for 3+ years
 TITLE_WANT = re.compile(
     r"software|\bswe\b|\bsde\b|developer|(back|front|full)[- ]?(end|stack)\s*(software\s*)?(engineer|developer|dev\b)|"
     r"machine learning|\bml\b|\bai\b|\bllm|deep learning|applied scientist|"
-    r"forward[- ]deployed|product engineer|web engineer|mobile engineer|ios engineer|android engineer",
+    r"forward[- ]deployed|web engineer|mobile engineer|ios engineer|android engineer",
     re.I,
 )
 TITLE_SKIP = re.compile(
@@ -91,10 +91,70 @@ YEARS = re.compile(
 )
 
 
+PREFERRED_SECTION = re.compile(r"preferred qualifications|preferred skills|nice[- ]to[- ]haves?|bonus points|pluses:", re.I)
+PLUS_YEARS = re.compile(r"(\d{1,2})\s*\+\s*years?\b", re.I)
+WORD_NUMS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+NOT_A_REQUIREMENT = re.compile(
+    r"holiday|per (calendar )?year|rotation|founded|history|innovat|in business|\bago\b|"
+    r"we'?ve been|we have been|for (more|over) than|more than \d+ years|over \d+ years|company",
+    re.I,
+)
+
+
+def _words_to_digits(text):
+    # "three (3) years" -> "3 years", "four to six years" -> "4 to 6 years"
+    text = re.sub(r"\b(" + "|".join(WORD_NUMS) + r")\s*\((\d+)\)", r"\2", text, flags=re.I)
+    return re.sub(r"\b(" + "|".join(WORD_NUMS) + r")\b(?=\s*(\+|-|–|to|or)?\s*(\w+\s+)?years?)",
+                  lambda m: str(WORD_NUMS[m.group(1).lower()]), text, flags=re.I)
+
+
 def years_required(text):
-    found = [int(m.group(1)) for m in YEARS.finditer(text or "") if 0 < int(m.group(1)) <= 15]
-    # The smallest number is usually the real minimum; bigger ones are "preferred" or company history.
-    return min(found) if found else None
+    """The main years-of-experience requirement, read the way Abi (with a Master's) would."""
+    found = []
+    # Only the must-haves count: stop at the "preferred / nice to have" section.
+    required = PREFERRED_SECTION.split(_words_to_digits(text or ""))[0]
+    for sentence in re.split(r"(?<=[.;!?])\s+|\n+", required):
+        if re.search(r"\bprefer|nice to have|\bbonus\b|\ba plus\b|\bideally\b", sentence, re.I):
+            continue
+        # "5+ years supporting X" is a requirement even without the word "experience".
+        matches = [m for m in list(YEARS.finditer(sentence)) + list(PLUS_YEARS.finditer(sentence))
+                   if 0 < int(m.group(1)) <= 15]
+        if not matches:
+            continue
+        # "Bachelor's with 3+ years, or Master's with 2+ years": the Master's number applies.
+        master = re.search(r"master'?s?", sentence, re.I)
+        if master and re.search(r"bachelor|\bbs\b|\bba\b", sentence, re.I):
+            after = [m for m in matches if m.start() > master.start()]
+            if after:
+                found.append(int(after[0].group(1)))
+                continue
+        for m in matches:
+            window = sentence[max(0, m.start() - 40): m.end() + 40]
+            if NOT_A_REQUIREMENT.search(window):
+                continue
+            # "Bachelor's degree, OR 3+ years of experience": the degree alone is enough.
+            if re.search(r"(degree|bachelor'?s?)[^.]{0,40}\bor\b\s*$", sentence[:m.start()], re.I):
+                continue
+            found.append(int(m.group(1)))
+    return max(found) if found else None
+
+
+# Signs of an experienced hire even when no number of years is given.
+SENIOR_IN_TEXT = re.compile(
+    r"(seeking|looking for|hiring|searching for)\s+(a|an)\s+[^.\n]{0,50}?\b(senior|staff|principal|lead|mid[- ]level|experienced|seasoned)\b|"
+    r"(proven|demonstrated) track record|extensive (professional |industry |hands-on )?experience|\bseasoned\b|"
+    r"deep expertise|significant (professional |industry )?experience",
+    re.I,
+)
+NEGATED = re.compile(r"^[^.\n]{0,60}\b(not|isn'?t|aren'?t)\s+(required|necessary|expected|needed|a must)", re.I)
+
+
+def asks_for_experienced(text):
+    # "Deep expertise ... is not required" is the opposite of asking for it.
+    return any(not NEGATED.search(text[m.end():]) for m in SENIOR_IN_TEXT.finditer(text or ""))
+
+
+EARLY_TITLE = re.compile(r"new grad|graduate|early career|entry|junior|\bjr\b|associate|\b(i|1)\b|university|campus", re.I)
 
 
 # ── SPONSORSHIP ──
@@ -185,5 +245,7 @@ def evaluate(j, now=None):
         or ("defense company (usually US citizens only)" if CITIZEN_ONLY_COMPANIES.search(j["company"]) else None)
         or ("says no sponsorship" if j["sponsorship"] == "no" else None)
         or (f"needs {j['years']}+ years" if j["years"] and j["years"] > MAX_YEARS else None)
+        or ("description asks for an experienced hire"
+            if not EARLY_TITLE.search(j["title"]) and asks_for_experienced(j["description"]) else None)
     )
     return (reason is None), reason
