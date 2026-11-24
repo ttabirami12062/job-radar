@@ -1,0 +1,6 @@
+data/jobs.db
+data/last_run.txt
+data/fresh_jobs.json
+__pycache__/
+*.pyc
+.DS_Store
