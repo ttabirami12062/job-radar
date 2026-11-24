@@ -167,3 +167,153 @@ def _workday(slug, title_ok=None):
 
 
 FETCHERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby, "workday": workday}
+
+
+# ── MORE COMPANY JOB SYSTEMS ──
+# Sources whose dates are only a day (or missing) are "coarse": the filters lean on
+# when we first saw the job instead of trusting the date alone.
+COARSE = {"workday", "amazon", "oracle", "workable", "icims", "list", "linkedin"}
+
+
+def day_to_time(d, now):
+    # A date with no time: today counts as fresh, anything older doesn't.
+    if not d:
+        return None
+    return now if d >= now.astimezone().date() else now - timedelta(hours=36)
+
+
+def amazon(_slug="amazon"):
+    now = datetime.now(timezone.utc)
+    out = []
+    for cat in ["software-development", "machine-learning-science"]:
+        for offset in range(0, 300, 100):
+            d = get_json("https://www.amazon.jobs/en/search.json?base_query=&sort=recent&country=USA"
+                         f"&result_limit=100&offset={offset}&category%5B%5D={cat}")
+            for j in d.get("jobs", []):
+                try:
+                    day = datetime.strptime(j["posted_date"], "%B %d, %Y").date()
+                except (KeyError, ValueError):
+                    day = None
+                desc = "\n".join(strip_html(j.get(k)) for k in ("description", "basic_qualifications", "preferred_qualifications"))
+                out.append(job("Amazon", "amazon", j["id_icims"], j["title"], j.get("normalized_location"),
+                               "https://www.amazon.jobs" + j["job_path"], day_to_time(day, now), desc,
+                               j.get("posted_date", "")))
+            if len(d.get("jobs", [])) < 100:
+                break
+    return out
+
+
+def smartrecruiters(slug, title_ok=None):
+    out, offset = [], 0
+    while offset < 500:
+        d = get_json(f"https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=100&offset={offset}")
+        for p in d.get("content", []):
+            loc = p.get("location") or {}
+            posted = parse_time(p.get("releasedDate"))
+            desc = ""
+            if posted and datetime.now(timezone.utc) - posted <= timedelta(days=1) and (title_ok is None or title_ok(p["name"])):
+                try:
+                    ad = get_json(f"https://api.smartrecruiters.com/v1/companies/{slug}/postings/{p['id']}").get("jobAd", {})
+                    desc = "\n".join(strip_html(s.get("text")) for s in (ad.get("sections") or {}).values() if isinstance(s, dict))
+                except Exception:
+                    pass
+            place = ", ".join(x for x in [loc.get("city"), loc.get("region"), (loc.get("country") or "").upper()] if x)
+            if loc.get("remote"):
+                place += " (Remote)"
+            out.append(job((p.get("company") or {}).get("name") or slug, "smartrecruiters", p["id"], p["name"],
+                           place, f"https://jobs.smartrecruiters.com/{slug}/{p['id']}", posted, desc))
+        offset += 100
+        if offset >= d.get("totalFound", 0):
+            break
+    return out
+
+
+def workable(slug, title_ok=None):
+    d = get_json(f"https://apply.workable.com/api/v3/accounts/{slug}/jobs",
+                 {"query": "", "location": [], "department": [], "worktype": [], "remote": []})
+    now = datetime.now(timezone.utc)
+    out = []
+    for p in d.get("results", []):
+        loc = p.get("location") or {}
+        published = parse_time(p.get("published"))
+        day = published.date() if published else None
+        desc = ""
+        if day and day >= (now - timedelta(days=1)).date() and (title_ok is None or title_ok(p["title"])):
+            try:
+                info = get_json(f"https://apply.workable.com/api/v2/accounts/{slug}/jobs/{p['shortcode']}")
+                desc = "\n".join(strip_html(info.get(k)) for k in ("description", "requirements", "benefits"))
+            except Exception:
+                pass
+        place = ", ".join(x for x in [loc.get("city"), loc.get("region"), loc.get("country")] if x)
+        if p.get("remote"):
+            place += " (Remote)"
+        out.append(job(slug, "workable", p["shortcode"], p["title"], place,
+                       f"https://apply.workable.com/{slug}/j/{p['shortcode']}/", day_to_time(day, now), desc))
+    return out
+
+
+def oracle(slug, title_ok=None):
+    host, site = slug.split("|")
+    base = f"https://{host}/hcmRestApi/resources/latest"
+    now = datetime.now(timezone.utc)
+    seen, out = set(), []
+    for term in ["software", "machine learning", "developer"]:
+        d = get_json(f"{base}/recruitingCEJobRequisitions?onlyData=true&expand=requisitionList.secondaryLocations"
+                     f"&finder=findReqs;siteNumber={site},keyword={urllib.request.quote(term)},sortBy=POSTING_DATES_DESC,limit=50")
+        for r in (d.get("items") or [{}])[0].get("requisitionList", []):
+            if r["Id"] in seen:
+                continue
+            seen.add(r["Id"])
+            try:
+                day = datetime.strptime(r.get("PostedDate", ""), "%Y-%m-%d").date()
+            except ValueError:
+                day = None
+            desc = ""
+            if day and day >= (now - timedelta(days=1)).date() and (title_ok is None or title_ok(r["Title"])):
+                try:
+                    det = get_json(f"{base}/recruitingCEJobRequisitionDetails?expand=all&onlyData=true"
+                                   f"&finder=ById;Id=%22{r['Id']}%22,siteNumber={site}")["items"][0]
+                    desc = "\n".join(strip_html(det.get(k)) for k in ("ExternalDescriptionStr", "ExternalQualificationsStr", "ExternalResponsibilitiesStr"))
+                except Exception:
+                    pass
+            locs = [r.get("PrimaryLocation") or ""] + [s.get("Name", "") for s in r.get("secondaryLocations") or []]
+            out.append(job(host.split(".")[0], "oracle", r["Id"], r["Title"], " / ".join(l for l in locs if l),
+                           f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{r['Id']}",
+                           day_to_time(day, now), desc, r.get("PostedDate", "")))
+    return out
+
+
+def get_text(url, timeout=20):
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", "replace")
+
+
+def icims(host, title_ok=None):
+    # iCIMS has no feed and usually no dates; links on the search page are the jobs.
+    out, seen = [], set()
+    for term in ["software", "machine learning", "developer"]:
+        page = get_text(f"https://{host}/jobs/search?ss=1&in_iframe=1&searchKeyword={urllib.request.quote(term)}")
+        for m in re.finditer(r'href="(https://[^"]+?/jobs/(\d+)/[^"]+?/job)[^"]*"[^>]*>(.*?)</a>', page, re.S):
+            url, jid = m.group(1), m.group(2)
+            title = re.sub(r"\s+", " ", re.sub(r"(External )?Job (Posting )?Title", "", strip_html(m.group(3)), flags=re.I)).strip()
+            if jid in seen or not title or title.lower() in ("apply", "view job"):
+                continue
+            seen.add(jid)
+            out.append(job(host.split(".")[0].replace("careers-", ""), "icims", jid, title, "", url, None, ""))
+    # Descriptions only for titles that already look right (one request each).
+    for j in out:
+        if title_ok is None or title_ok(j["title"]):
+            try:
+                page = get_text(j["url"] + "?in_iframe=1")
+                j["description"] = strip_html(page)[:20000]
+                loc = re.search(r"(?:Job Locations?|Location)\s*</?[^>]*>\s*(?:<[^>]+>\s*)*([^<]{3,80})", page)
+                if loc:
+                    j["location"] = loc.group(1).strip()
+            except Exception:
+                pass
+    return out
+
+
+FETCHERS.update({"amazon": amazon, "smartrecruiters": smartrecruiters, "workable": workable,
+                 "oracle": oracle, "icims": icims})

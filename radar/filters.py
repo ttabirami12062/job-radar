@@ -3,12 +3,14 @@ so a run can show exactly why jobs were dropped and the rules can be tuned."""
 import re
 from datetime import datetime, timedelta, timezone
 
+from radar.sources import COARSE
+
 MAX_AGE_HOURS = 24
 MAX_YEARS = 2  # SDE 1 / early career: drop anything that asks for 3+ years
 
 # ── TITLE ──
 TITLE_WANT = re.compile(
-    r"software|\bswe\b|\bsde\b|developer|back[- ]?end|front[- ]?end|full[- ]?stack|"
+    r"software|\bswe\b|\bsde\b|developer|(back|front|full)[- ]?(end|stack)\s*(software\s*)?(engineer|developer|dev\b)|"
     r"machine learning|\bml\b|\bai\b|\bllm|deep learning|applied scientist|"
     r"forward[- ]deployed|product engineer|web engineer|mobile engineer|ios engineer|android engineer",
     re.I,
@@ -24,7 +26,8 @@ TITLE_SKIP = re.compile(
     r"industrial|process engineer|environmental|chemical|civil|test engineer|summer|student|"
     r"\b(s|l|p)?mts\b|member of technical staff|researcher|research scientist|professor|"
     r"neuro|clinical|nurse|financial|accountant|technical writer|\bhubspot|salesforce developer|"
-    r"coordinator|key holder|cashier|retail|\bstore\b|\bts\b|mid[- ]?level|expert|devops",
+    r"coordinator|key holder|cashier|retail|\bstore\b|\bts\b|mid[- ]?level|expert|devops|"
+    r"tester|\bqa\b|quality assurance|\bemb\b|\bcno\b|power platform|consultant|customer success",
     re.I,
 )
 
@@ -72,10 +75,12 @@ def is_us(location):
     loc = location or ""
     if not loc.strip():
         return True  # unknown: keep rather than lose a real job
-    if US_WORDS.search(loc) or STATE_ABBR.search(loc):
+    if US_WORDS.search(loc):
         return True
     if NON_US.search(loc):
         return False
+    if STATE_ABBR.search(loc):
+        return True
     return bool(re.search(r"remote|anywhere|hybrid", loc, re.I))
 
 
@@ -124,12 +129,25 @@ BLOCKED_COMPANIES = re.compile(
     r"beacon ?fire|synergistic ?it|revature|smart ?it ?frame|fdm group|skill ?storm|genspark|"
     r"collabera|infosys|cognizant|tata consultancy|\btcs\b|wipro|\bhcl\b|tech ?mahindra|capgemini|"
     r"mindtree|ltimindtree|mphasis|accenture federal|jobot|\bdice\b|cybercoders|robert half|"
-    r"teksystems|insight global|randstad|kforce|apex systems|staffing",
+    r"teksystems|insight global|randstad|kforce|apex systems|staffing|recruiting|talent solutions|"
+    r"consultancy|consulting services|it services|infotech|software solutions|tech solutions llc|\btalent",
     re.I,
 )
 STAFFING_TEXT = re.compile(
     r"\bc2c\b|corp[- ]to[- ]corp|\bw2 only\b|on behalf of (our|a) client|our client is|"
     r"third[- ]party (vendor|recruit)|training and placement|marketing your (profile|resume)",
+    re.I,
+)
+
+
+# Defense and government contractors almost always need US citizenship or a clearance,
+# even when the short list entry doesn't say so.
+CITIZEN_ONLY_COMPANIES = re.compile(
+    r"lockheed|northrop|raytheon|\brtx\b|l3harris|general dynamics|\bgdms\b|bae systems|leidos|\bsaic\b|"
+    r"booz allen|\bcaci\b|peraton|parsons|\bsmx\b|anduril|spacex|naval nuclear|mantech|\bmitre\b|"
+    r"sandia|los alamos|lawrence livermore|huntington ingalls|keylogic|american systems|b/core|"
+    r"wyetech|woodsong|altron|ita international|bluestaq|noblis|\bgdit\b|textron|sierra nevada|"
+    r"shield ai|palantir usg|jacobs|amentum|\bkbr\b|\bv2x\b|chenega|\bicf\b|aerovironment|\bav\b",
     re.I,
 )
 
@@ -154,7 +172,7 @@ def evaluate(j, now=None):
     # we first saw the job, but not on a board's very first check, when everything is "new".
     fresh = timedelta(hours=MAX_AGE_HOURS)
     posted_ok = j.get("posted_at") and now - datetime.fromisoformat(j["posted_at"]) <= fresh
-    seen_ok = (j["ats"] == "workday" or not j.get("posted_at")) and not j.get("baseline") \
+    seen_ok = (j["ats"] in COARSE or not j.get("posted_at")) and not j.get("baseline") \
         and now - datetime.fromisoformat(j["first_seen"]) <= fresh
     if not (posted_ok or seen_ok):
         return False, "older than 24h" if j.get("posted_at") else "no date (first check)"
@@ -163,6 +181,7 @@ def evaluate(j, now=None):
         check_title(j["title"])
         or (None if is_us(j["location"]) else "not in the US")
         or check_fake(j["company"], text)
+        or ("defense company (usually US citizens only)" if CITIZEN_ONLY_COMPANIES.search(j["company"]) else None)
         or ("says no sponsorship" if j["sponsorship"] == "no" else None)
         or (f"needs {j['years']}+ years" if j["years"] and j["years"] > MAX_YEARS else None)
     )
