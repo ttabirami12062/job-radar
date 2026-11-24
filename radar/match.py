@@ -54,7 +54,8 @@ SKILLS = {
 }
 COMPILED = {k: re.compile(v, re.I) for k, v in SKILLS.items()}
 
-# Which resume suits which kind of title, used to break near-ties.
+# Each resume is tailored to one kind of role, so the job title picks the resume.
+# Order matters: the first match wins ("AI Full Stack Engineer" is an AI role).
 ROLE_HINTS = {
     "ai": r"\bai\b|\bllm|agent|applied ai|forward[- ]deployed|genai",
     "ml": r"machine learning|\bml\b|data scien|applied scien|computer vision|deep learning",
@@ -62,8 +63,10 @@ ROLE_HINTS = {
     "fullstack": r"full[- ]?stack",
     "backend": r"back[- ]?end|\bapi\b|platform|infrastructure|distributed",
     "software-testing": r"\btest|\bqa\b|quality|sdet|automation",
-    "linux": r"linux|systems?\b|devops|site reliability|\bsre\b|cloud|embedded",
+    "linux": r"linux|systems? engineer|devops|site reliability|\bsre\b|cloud engineer|infrastructure engineer",
 }
+# Generic "Software Engineer" titles: pick from these by what the job description stresses.
+GENERAL = ["backend", "fullstack", "frontend", "ai", "ml"]
 
 
 def skills_in(text):
@@ -107,12 +110,12 @@ def match(job):
     resumes = resume_skills()
     anywhere = set().union(*resumes.values())
 
-    def rank(name):
-        hit = len(wanted & resumes[name]) / len(wanted)
-        bonus = 0.05 if re.search(ROLE_HINTS.get(name, "$^"), job["title"], re.I) else 0
-        return hit + bonus
-
-    best = max(resumes, key=rank)
+    by_title = [r for r, rx in ROLE_HINTS.items() if r in resumes and re.search(rx, job["title"], re.I)]
+    if by_title:
+        best = by_title[0]
+    else:
+        options = [r for r in GENERAL if r in resumes] or list(resumes)
+        best = max(options, key=lambda r: len(wanted & resumes[r]))
     text = f"{job['title']}\n{job.get('description', '')}"
     wanted -= either_or_covered(text, resumes[best])
     have = wanted & resumes[best]

@@ -43,6 +43,11 @@ def open_db():
         key text primary key, company text, ats text, title text, location text, url text,
         posted_at text, first_seen text, last_seen text, years int, sponsorship text,
         keep int, reason text, status text default 'new', description text)""")
+    db.execute("create table if not exists runs (started text, finished text, boards int, failed int, jobs_read int, kept int)")
+    try:
+        db.execute("alter table jobs add column match text")
+    except sqlite3.OperationalError:
+        pass  # already there
     db.execute("create table if not exists boards (ats text, slug text, ok int, jobs int, error text, checked text, first_ok text, primary key (ats, slug))")
     return db
 
@@ -120,7 +125,9 @@ def main():
                 keep, reason = filters.evaluate(j, now)
                 reasons[reason or "KEPT"] += 1
                 db.execute(
-                    """insert into jobs values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """insert into jobs (key, company, ats, title, location, url, posted_at, first_seen, last_seen,
+                                        years, sponsorship, keep, reason, status, description)
+                       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                        on conflict(key) do update set title=excluded.title, location=excluded.location,
                        posted_at=excluded.posted_at, last_seen=excluded.last_seen, years=excluded.years,
                        sponsorship=excluded.sponsorship, keep=excluded.keep, reason=excluded.reason,
@@ -142,9 +149,17 @@ def main():
         if k not in best or SOURCE_RANK[j["ats"]] < SOURCE_RANK[best[k]["ats"]]:
             best[k] = j
     dupes = len(kept) - len(best)
+    chosen = {j["key"] for j in best.values()}
+    for j in kept:
+        if j["key"] not in chosen:
+            db.execute("update jobs set keep=0, reason='duplicate of another source' where key=?", (j["key"],))
     kept = sorted(best.values(), key=lambda j: j["posted_at"] or j["first_seen"], reverse=True)
     for j in kept:
         match.match(j)
+        db.execute("update jobs set match=? where key=?", (json.dumps(j["match"]), j["key"]))
+    db.execute("insert into runs values (?,?,?,?,?,?)",
+               (now_s, datetime.now(timezone.utc).isoformat(), len(companies), failed, total, len(kept)))
+    db.commit()
     (DATA / "fresh_jobs.json").write_text(json.dumps(
         [{k: v for k, v in j.items() if k not in ("description", "baseline")} for j in kept], indent=2))
 

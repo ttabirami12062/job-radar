@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Radar</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --text: #1c1d2b; --muted: #6b6e85; --line: #e4e6ef;
+    --accent: #5b5bd6; --accent-soft: #ececfd;
+    --good: #1f9d55; --good-soft: #e3f5ea; --mid: #c27c0e; --mid-soft: #fdf1dc;
+    --bad: #d64545; --bad-soft: #fce8e8; --chip: #f0f1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12131a; --card: #1b1c26; --text: #ececf3; --muted: #9a9cb3; --line: #2c2e3c;
+      --accent: #8e8cf0; --accent-soft: #2a2a48;
+      --good: #4cc77f; --good-soft: #17301f; --mid: #e6a640; --mid-soft: #33270f;
+      --bad: #f07070; --bad-soft: #3a1c1c; --chip: #262836;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+  .top { display: flex; align-items: center; gap: 12px; padding: 14px 0 10px; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.3px; }
+  .meta { color: var(--muted); font-size: 13px; flex: 1; min-width: 200px; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); padding: 6px 12px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .tabs { display: flex; gap: 4px; }
+  .tab { border: none; background: none; padding: 8px 12px; border-radius: 8px 8px 0 0; color: var(--muted); font-weight: 600; }
+  .tab.on { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+  .tab .n { font-weight: 500; font-size: 12px; margin-left: 4px; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 0; align-items: center; }
+  input[type=search], select { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  input[type=search] { flex: 1; min-width: 180px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .fchip { padding: 5px 10px; border-radius: 999px; font-size: 13px; }
+  .fchip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  main { padding: 14px 0 60px; }
+  .card { display: grid; grid-template-columns: 56px 1fr auto; gap: 14px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 10px; }
+  .score { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 15px; }
+  .s-good { background: var(--good-soft); color: var(--good); }
+  .s-mid { background: var(--mid-soft); color: var(--mid); }
+  .s-low { background: var(--chip); color: var(--muted); }
+  .title { font-size: 15px; font-weight: 650; color: var(--text); text-decoration: none; }
+  .title:hover { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+  .tag.resume { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .tag.yes { background: var(--good-soft); color: var(--good); }
+  .skills { margin-top: 8px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+  .skills b { font-weight: 600; color: var(--muted); margin-right: 4px; }
+  .sk { display: inline-block; padding: 1px 7px; border-radius: 6px; margin: 1px 2px; }
+  .sk.have { background: var(--good-soft); color: var(--good); }
+  .sk.other { background: var(--mid-soft); color: var(--mid); }
+  .sk.miss { background: var(--bad-soft); color: var(--bad); }
+  .actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; min-width: 104px; }
+  .actions a.apply { text-align: center; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; border-radius: 8px; padding: 7px 12px; }
+  .actions button { font-size: 13px; padding: 5px 10px; }
+  .done { color: var(--good); font-weight: 600; font-size: 13px; text-align: center; }
+  .empty { text-align: center; color: var(--muted); padding: 60px 0; }
+  .runlog { font-size: 12px; color: var(--muted); padding-bottom: 8px; white-space: pre-wrap; }
+  @media (max-width: 640px) {
+    .card { grid-template-columns: 44px 1fr; }
+    .score { width: 42px; height: 42px; font-size: 13px; }
+    .actions { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
+    .actions > * { flex: 1; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="top">
+      <h1>Job Radar</h1>
+      <div class="meta" id="meta">Loading…</div>
+      <button class="primary" id="runBtn">Check for new jobs</button>
+    </div>
+    <div class="runlog" id="runlog" hidden></div>
+    <div class="tabs" id="tabs"></div>
+  </div>
+</header>
+<div class="wrap">
+  <div class="filters">
+    <input type="search" id="q" placeholder="Search title, company, skill, location…">
+    <select id="minScore">
+      <option value="0">Any match</option>
+      <option value="50">50%+ match</option>
+      <option value="70">70%+ match</option>
+      <option value="85">85%+ match</option>
+    </select>
+    <select id="sort">
+      <option value="new">Newest first</option>
+      <option value="match">Best match first</option>
+    </select>
+    <div class="chips" id="roles"></div>
+  </div>
+  <main id="list"></main>
+</div>
+
+<script>
+const ROLES = [["all", "All roles"], ["ai", "AI"], ["ml", "ML"], ["backend", "Backend"], ["fullstack", "Full-stack"],
+               ["frontend", "Frontend"], ["software-testing", "Testing"], ["linux", "Linux / systems"]];
+const RESUME_NAMES = {ai: "AI", ml: "ML", backend: "Backend", fullstack: "Full-stack", frontend: "Frontend",
+                      "software-testing": "Testing", linux: "Linux"};
+const SOURCE_NAMES = {greenhouse: "Greenhouse", lever: "Lever", ashby: "Ashby", workday: "Workday", amazon: "Amazon",
+                      oracle: "Oracle", icims: "iCIMS", smartrecruiters: "SmartRecruiters", workable: "Workable",
+                      list: "Daily list", linkedin: "LinkedIn"};
+// These sources only give a day (or nothing), so "when" is shown as "today" rather than exact hours.
+const COARSE = new Set(["workday", "amazon", "oracle", "workable", "icims", "list", "linkedin"]);
+
+let state = {jobs: [], tab: "fresh", role: "all"};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+function ago(iso) {
+  if (!iso) return "";
+  const h = (Date.now() - new Date(iso)) / 36e5;
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m ago`;
+  if (h < 48) return `${Math.round(h)}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+function when(j) {
+  if (COARSE.has(j.ats)) return `posted today · found ${ago(j.first_seen)}`;
+  return `posted ${ago(j.posted_at)}`;
+}
+
+function tabOf(j) {
+  if (j.status === "applied") return "applied";
+  if (j.status === "hidden") return "hidden";
+  if (j.status === "saved") return "saved";
+  return "fresh";
+}
+
+function visible() {
+  const q = $("q").value.trim().toLowerCase();
+  const min = +$("minScore").value;
+  let list = state.jobs.filter((j) => tabOf(j) === state.tab);
+  if (state.role !== "all") list = list.filter((j) => j.match && j.match.best === state.role);
+  if (min) list = list.filter((j) => j.match && j.match.score >= min);
+  if (q) list = list.filter((j) => [j.title, j.company, j.location, ...(j.match?.matched || []), ...(j.match?.missing || [])]
+                                    .join(" ").toLowerCase().includes(q));
+  const t = (j) => new Date(j.posted_at || j.first_seen).getTime();
+  list.sort($("sort").value === "match"
+    ? (a, b) => (b.match?.score ?? -1) - (a.match?.score ?? -1) || t(b) - t(a)
+    : (a, b) => t(b) - t(a));
+  return list;
+}
+
+function skillRow(label, items, cls) {
+  if (!items || !items.length) return "";
+  return `<div><b>${label}</b>${items.map((s) => `<span class="sk ${cls}">${esc(s)}</span>`).join("")}</div>`;
+}
+
+function card(j) {
+  const m = j.match || {};
+  const score = m.score ?? null;
+  const sc = score === null ? "s-low" : score >= 80 ? "s-good" : score >= 60 ? "s-mid" : "s-low";
+  const tags = [
+    m.best ? `<span class="tag resume">Use ${RESUME_NAMES[m.best] || m.best} resume</span>` : "",
+    j.years ? `<span class="tag">${j.years}+ yrs asked</span>` : `<span class="tag">no years listed</span>`,
+    j.sponsorship === "yes" ? `<span class="tag yes">sponsors visas</span>` : `<span class="tag">visa: not mentioned</span>`,
+    `<span class="tag">${SOURCE_NAMES[j.ats] || j.ats}</span>`,
+  ].join("");
+  const skills = m.best
+    ? skillRow("You have", m.matched, "have") + skillRow("On another resume", m.on_other_resume, "other") + skillRow("Missing", m.missing, "miss")
+    : `<div style="color:var(--muted)">${esc(m.note || "Open the job to see the full description")}</div>`;
+  const acts = j.status === "applied"
+    ? `<div class="done">Applied</div><button data-k="${esc(j.key)}" data-s="new">Undo</button>`
+    : `<a class="apply" href="${esc(j.url)}" target="_blank" rel="noopener" data-k="${esc(j.key)}">Apply</a>
+       <button data-k="${esc(j.key)}" data-s="applied">Mark applied</button>
+       ${j.status === "saved" ? `<button data-k="${esc(j.key)}" data-s="new">Unsave</button>` : `<button data-k="${esc(j.key)}" data-s="saved">Save</button>`}
+       ${j.status === "hidden" ? `<button data-k="${esc(j.key)}" data-s="new">Unhide</button>` : `<button data-k="${esc(j.key)}" data-s="hidden">Hide</button>`}`;
+  return `<div class="card">
+    <div class="score ${sc}">${score === null ? "?" : score + "%"}</div>
+    <div>
+      <a class="title" href="${esc(j.url)}" target="_blank" rel="noopener">${esc(j.title)}</a>
+      <div class="sub">${esc(j.company)} · ${esc(j.location || "Location not listed")} · ${when(j)}</div>
+      <div class="tags">${tags}</div>
+      <div class="skills">${skills}</div>
+    </div>
+    <div class="actions">${acts}</div>
+  </div>`;
+}
+
+function render() {
+  const counts = {fresh: 0, saved: 0, applied: 0, hidden: 0};
+  state.jobs.forEach((j) => counts[tabOf(j)]++);
+  $("tabs").innerHTML = [["fresh", "Fresh (24h)"], ["saved", "Saved"], ["applied", "Applied"], ["hidden", "Hidden"]]
+    .map(([k, l]) => `<button class="tab ${state.tab === k ? "on" : ""}" data-tab="${k}">${l}<span class="n">${counts[k]}</span></button>`).join("");
+  $("roles").innerHTML = ROLES.map(([k, l]) => `<button class="fchip ${state.role === k ? "on" : ""}" data-role="${k}">${l}</button>`).join("");
+  const list = visible();
+  $("list").innerHTML = list.length ? list.map(card).join("")
+    : `<div class="empty">${state.tab === "fresh" ? "No jobs match these filters right now." : "Nothing here yet."}</div>`;
+}
+
+async function load() {
+  const d = await (await fetch("/api/jobs")).json();
+  state.jobs = d.jobs;
+  const r = d.last_run;
+  $("meta").textContent = r
+    ? `Last checked ${ago(r.finished)} · ${r.boards} job boards · ${r.jobs_read.toLocaleString()} jobs read · ${r.kept} fresh matches`
+    : "No runs yet. Click “Check for new jobs”.";
+  setRunning(d.running);
+  render();
+}
+
+async function setStatus(key, status) {
+  await fetch("/api/status", {method: "POST", body: JSON.stringify({key, status})});
+  const j = state.jobs.find((x) => x.key === key);
+  if (j) j.status = status;
+  render();
+}
+
+let poll = null;
+function setRunning(on) {
+  $("runBtn").disabled = on;
+  $("runBtn").textContent = on ? "Checking… (about 6 min)" : "Check for new jobs";
+  $("runlog").hidden = !on;
+  if (on && !poll) {
+    poll = setInterval(async () => {
+      const s = await (await fetch("/api/run")).json();
+      $("runlog").textContent = s.log.join("\n");
+      if (!s.running) { clearInterval(poll); poll = null; load(); }
+    }, 4000);
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-tab],[data-role],[data-s],a.apply");
+  if (!t) return;
+  if (t.dataset.tab) { state.tab = t.dataset.tab; render(); }
+  else if (t.dataset.role) { state.role = t.dataset.role; render(); }
+  else if (t.dataset.s) setStatus(t.dataset.k, t.dataset.s);
+  else if (t.matches("a.apply")) {
+    // Ask once they come back, so "applied" is never marked by accident.
+    const key = t.dataset.k;
+    window.addEventListener("focus", function ask() {
+      window.removeEventListener("focus", ask);
+      setTimeout(() => { if (confirm("Did you apply to this job? Click OK to move it to Applied.")) setStatus(key, "applied"); }, 300);
+    });
+  }
+});
+$("runBtn").onclick = async () => { await fetch("/api/run", {method: "POST"}); setRunning(true); };
+["q", "minScore", "sort"].forEach((id) => $(id).addEventListener("input", render));
+load();
+</script>
+</body>
+</html>
