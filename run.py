@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
-from radar import filters, lists
+from radar import filters, lists, match
 from radar.sources import COARSE, FETCHERS
 
 ROOT = Path(__file__).parent
@@ -143,6 +143,8 @@ def main():
             best[k] = j
     dupes = len(kept) - len(best)
     kept = sorted(best.values(), key=lambda j: j["posted_at"] or j["first_seen"], reverse=True)
+    for j in kept:
+        match.match(j)
     (DATA / "fresh_jobs.json").write_text(json.dumps(
         [{k: v for k, v in j.items() if k not in ("description", "baseline")} for j in kept], indent=2))
 
@@ -154,14 +156,17 @@ def main():
     print("  by source:", dict(Counter(j["ats"] for j in kept)))
     for j in kept:
         if j["ats"] in COARSE:
-            print(f"  {j['posted_label'][:9]:>9} | {j['company'][:22]:22} | {j['title'][:55]:55} | {j['location'][:28]:28} | yrs {(str(j['years'])+'y') if j['years'] else '-':3} | sponsor {j['sponsorship']}")
-            print(f"            {j['url']}")
-            continue
-        age = (now - datetime.fromisoformat(j["posted_at"] or j["first_seen"])).total_seconds() / 3600
+            when = j["posted_label"][:12]
+        else:
+            when = f"{(now - datetime.fromisoformat(j['posted_at'])).total_seconds() / 3600:.0f}h ago"
+        m = j["match"]
+        score = f"{m['score']}%" if m["score"] is not None else "?"
         yrs = f"{j['years']}y" if j["years"] else "-"
-        print(f"  {age:5.0f}h ago | {j['company'][:22]:22} | {j['title'][:55]:55} | {j['location'][:28]:28} | yrs {yrs:3} | sponsor {j['sponsorship']}")
-        print(f"            {j['url']}")
-
+        print(f"  {score:>4} {when:>12} | {j['company'][:22]:22} | {j['title'][:52]:52} | {j['location'][:24]:24} | yrs {yrs:3} | visa {j['sponsorship']}")
+        if m["best"]:
+            gaps = f" | missing: {', '.join(m['missing'])}" if m["missing"] else ""
+            print(f"       use {m['best']} resume{gaps}")
+        print(f"       {j['url']}")
 
 if __name__ == "__main__":
     sys.exit(main())
