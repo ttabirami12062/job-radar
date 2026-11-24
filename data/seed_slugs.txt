@@ -520,6 +520,7 @@ sr SmarterAgent
 sr SopraSteria1
 sr SpringVentureGroup1
 sr SyngentaGroup
+sr VeoliaEnvironnementSA
 sr WellmarkInc
 sr WesternDigital
 wd aaaie|wd1|CSAACareers2

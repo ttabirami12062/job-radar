@@ -4,7 +4,9 @@
     python3 run.py --limit 50 # quick test on 50 companies
 """
 import argparse
+import fcntl
 import re
+import subprocess
 import json
 import sqlite3
 import sys
@@ -44,7 +46,7 @@ def open_db():
         posted_at text, first_seen text, last_seen text, years int, sponsorship text,
         keep int, reason text, status text default 'new', description text)""")
     db.execute("create table if not exists runs (started text, finished text, boards int, failed int, jobs_read int, kept int)")
-    for col in ("match", "real_posted", "date_check"):
+    for col in ("match", "real_posted", "date_check", "notified"):
         try:
             db.execute(f"alter table jobs add column {col} text")
         except sqlite3.OperationalError:
@@ -81,7 +83,30 @@ def refresh_seeds(list_texts):
     return len(new)
 
 
+ALERT_SCORE = 80
+
+
+def notify(jobs):
+    """Mac notification for new strong matches. Each job is announced once."""
+    if not jobs:
+        return
+    top = sorted(jobs, key=lambda j: -j["match"]["score"])
+    lines = [f"{j['match']['score']}% {j['company']}: {j['title']}" for j in top[:3]]
+    more = f" (+{len(jobs) - 3} more)" if len(jobs) > 3 else ""
+    title = f"{len(jobs)} new strong match{'es' if len(jobs) > 1 else ''}{more}"
+    body = " · ".join(lines).replace('"', "'")[:230]
+    subprocess.run(["osascript", "-e", f'display notification "{body}" with title "Job Radar" subtitle "{title}" sound name "Glass"'],
+                   check=False)
+
+
 def main():
+    # Only one run at a time (the 3-hourly schedule and the dashboard button can overlap).
+    lock = open(DATA / "run.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("Another run is already going; skipping this one.")
+        return
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, help="only check this many companies (for testing)")
     ap.add_argument("--no-linkedin", action="store_true", help="skip LinkedIn this run")
@@ -202,6 +227,15 @@ def main():
     for j in kept:
         match.match(j)
         db.execute("update jobs set match=? where key=?", (json.dumps(j["match"]), j["key"]))
+    strong = []
+    for j in kept:
+        score = j["match"].get("score") or 0
+        verified = not j.get("date_check", "").startswith("not verified")
+        seen = db.execute("select notified from jobs where key=?", (j["key"],)).fetchone()
+        if score >= ALERT_SCORE and verified and not (seen and seen[0]):
+            strong.append(j)
+            db.execute("update jobs set notified='1' where key=?", (j["key"],))
+    notify(strong)
     db.execute("insert into runs values (?,?,?,?,?,?)",
                (now_s, datetime.now(timezone.utc).isoformat(), len(companies), failed, total, len(kept)))
     db.commit()
