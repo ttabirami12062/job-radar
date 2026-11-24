@@ -4,7 +4,7 @@
 <dict>
     <key>Label</key><string>com.jobradar.collector</string>
     <key>ProgramArguments</key>
-    <array><string>/usr/bin/python3</string><string>run.py</string></array>
+    <array><string>/usr/bin/python3</string><string>-u</string><string>run.py</string></array>
     <key>WorkingDirectory</key><string>/Users/abirami/projects/job-radar</string>
     <!-- every 3 hours; a run missed during sleep happens on wake -->
     <key>StartInterval</key><integer>10800</integer>

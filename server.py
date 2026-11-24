@@ -50,7 +50,7 @@ def start_run():
     if is_running():
         return False
     log = open(LOG, "w")
-    run_proc = subprocess.Popen([sys.executable, "run.py"], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+    run_proc = subprocess.Popen([sys.executable, "-u", "run.py"], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
     return True
 
 
